@@ -10,8 +10,8 @@ import os
 from PySide6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QScrollArea, 
                              QListWidget, QListWidgetItem, QDoubleSpinBox, QFormLayout, 
                              QComboBox, QCheckBox, QPushButton, QLabel, QApplication,
-                             QMainWindow, QTabWidget, QTableWidget, QHeaderView,
-                             QDockWidget, QSplitter) 
+                             QMainWindow, QTabWidget, QTableWidget, QHeaderView, QTableWidgetItem,
+                             QDockWidget, QSplitter, QInputDialog, QLineEdit) 
 
 from PySide6.QtCore import Qt, QSize, QTimer
 from PySide6.QtGui import QVector3D, QVector4D, QIcon, QPixmap
@@ -25,6 +25,8 @@ from .viewport_hook import perform_background_hardware_link
 from .propstate import PropStateMachine
 from .roommap import MHRoomLayoutMap
 from core.debug import dumper
+
+from mh2_official_tools.prop_panel.core.json_manager import load_props_manifest, update_prop_json_entry
 
 _current_dir = os.path.dirname(os.path.abspath(__file__))
 _plugin_root = os.path.abspath(os.path.join(_current_dir, ".."))
@@ -60,8 +62,16 @@ class MH2PropParticle:
         else:
             self.color = [1.0, 0.4, 0.0, 1.0] # Fire Magic Torch vibrant orange fallback
             
-        self.birth_time = time.time()
+        #self.birth_time = time.time()
+        self.lifetime = 0.0
         self.lifespan = random.uniform(0.6, 1.5)
+
+    def is_dead(self):
+        return self.lifetime > self.lifespan
+
+    def update(self, span):
+        self.lifetime += span
+        self.x += 1
 
 class MHRoomFloorGeometry:
     """Dynamically constructs an isolated 4-corner floor square mesh overlay."""
@@ -480,8 +490,6 @@ class PropManLeftPanel(QWidget):
     def refresh_inventory_list(self):
         """Clears and rebuilds the inventory table view rows cleanly using true manifest dictionaries."""
         try:
-            from PySide6.QtWidgets import QTableWidgetItem
-            from mh2_official_tools.prop_panel.core.json_manager import load_props_manifest
             props_manifest = load_props_manifest()
             
             # Wipe existing rows completely to refresh layout canvas channels
@@ -550,7 +558,6 @@ class PropManLeftPanel(QWidget):
 
     def deploy_scene_asset(self, prop_id_key):
         """Loads items dynamically by matching manifest parameters directly to disk files."""
-        from mh2_official_tools.prop_panel.core.json_manager import load_props_manifest
         manifest = load_props_manifest()
         
         asset_profile = manifest.get(prop_id_key, {})
@@ -672,7 +679,6 @@ class PropManLeftPanel(QWidget):
                     prop.is_mesh_visible = is_visible
                     prop.visible = is_visible
 
-            from mh2_official_tools.prop_panel.core.json_manager import update_prop_json_entry
             update_prop_json_entry(active_id, {"is_mesh_visible": is_visible})
             print(f"[Prop Studio Context] Ghost option updated and saved for item: {active_id}")
 
@@ -703,7 +709,6 @@ class PropManLeftPanel(QWidget):
                     prop.object_type = target_type
                     prop.is_emitting = checked
 
-            from mh2_official_tools.prop_panel.core.json_manager import update_prop_json_entry
             update_prop_json_entry(active_id, {"is_emitting": checked, "type": target_type})
             print(f"[Prop Studio Context] Emission loop updated and saved for item: {active_id}")
             
@@ -750,7 +755,6 @@ class PropManLeftPanel(QWidget):
             self.setValueFromProp(current_prop)
 
         # Sync text matching loops case-insensitively with the JSON definitions files cache
-        from mh2_official_tools.prop_panel.core.json_manager import load_props_manifest
         loaded_manifest = load_props_manifest()
         
         asset_profile = loaded_manifest.get(prop_id, {})
@@ -1111,6 +1115,7 @@ class PropManagerPanel(MHGroupBox):
             return
 
         for prop in props_list:
+
             # Check variable schemas safely across all script generations
             obj_type = getattr(prop, 'object_type', getattr(prop, 'type', 'STATIC'))
             if str(obj_type).upper() != 'EMITTER' and not getattr(prop, 'is_emitting', False):
@@ -1122,6 +1127,7 @@ class PropManagerPanel(MHGroupBox):
                     continue
 
             if not hasattr(prop, "particles_pool"):
+                #print ("object", prop.name, "create new pool")
                 prop.particles_pool = []
 
             max_particles = getattr(prop, 'max_particles', getattr(prop, 'particle_count', 200))
@@ -1133,19 +1139,14 @@ class PropManagerPanel(MHGroupBox):
                 for _ in range(2):
                     new_particle = MH2PropParticle(p_pos, p_color)
                     prop.particles_pool.append(new_particle)
+                #print ("object", prop.name, "generate pool", len(prop.particles_pool))
 
             # 2. Progress coordinates smoothly using a flat physics delta time step
             for p in prop.particles_pool:
-
-                if hasattr(p, 'update'):
-                    p.update(0.033) # Progress physics forward using 30fps step
-                else:
-                    # Fallback structural update if the raw particle class is raw list array format
-                    pass 
+                p.update(0.033) # Progress physics forward using 30fps step
 
             # 3. Flush expired particle nodes out of active drawing tracking lists
-            if hasattr(prop, 'particles_pool'):
-                prop.particles_pool = [p for p in prop.particles_pool if hasattr(p, 'is_dead') and not p.is_dead()]
+            prop.particles_pool = [p for p in prop.particles_pool if not p.is_dead()]
             
             # 4. Bind values cleanly onto the shared object so opengl/multi_prop.py can read them
             prop.particles = [[float(part.x), float(part.y), float(part.z)] for part in prop.particles_pool]
@@ -1173,8 +1174,6 @@ class PropManagerPanel(MHGroupBox):
 
     def trigger_addon_exporter(self):
         """Streamlined Scene Exporter. Hard-coded to glTF standard format."""
-        import os
-        from PySide6.QtWidgets import QInputDialog, QLineEdit
 
         active_props = []
         sources = [
@@ -2105,11 +2104,11 @@ _standalone_studio_dock_instance = None
 def initialize_prop_studio(app_reference, glob_reference, **kwargs):
     """Official decoupled entry point executed via the plugin panel."""
     global _standalone_studio_dock_instance
-    import os
 
     main_window = None
     for widget in QApplication.topLevelWidgets():
-        if isinstance(widget, QMainWindow) or widget.objectName() == "mainwindow" or hasattr(widget, "central_widget"):
+        # if isinstance(widget, QMainWindow) or widget.objectName() == "mainwindow" or hasattr(widget, "central_widget"):
+        if isinstance(widget, QMainWindow):
             main_window = widget
             break
 
@@ -2133,7 +2132,6 @@ def initialize_prop_studio(app_reference, glob_reference, **kwargs):
     _standalone_studio_dock_instance.resize(1100, 850)
 
 
-    from mh2_official_tools.prop_panel.core.json_manager import load_props_manifest, update_prop_json_entry
     loaded_manifest = load_props_manifest()
     
     # Store the real file records cache onto the dock window properties permanently
@@ -2357,6 +2355,8 @@ def initialize_prop_studio(app_reference, glob_reference, **kwargs):
         nonlocal main_window
         print("[Prop Studio Core] Compiling workspace panel widgets layout...")
         
+        env = main_window.glob.env
+
         studio_room_main = QWidget()
         studio_room_main.setObjectName("prop_studio_room_controller_canvas")
         
@@ -2370,14 +2370,8 @@ def initialize_prop_studio(app_reference, glob_reference, **kwargs):
         asset_catalog_tabs = QTabWidget()
         asset_catalog_tabs.setMinimumWidth(280)
         
-        plugin_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-        addon_props_dir = os.path.normpath(os.path.join(plugin_root, "data", "props")).replace("\\", "/")
-        
-        user_props_dir = ""
-        if hasattr(main_window, 'glob') and hasattr(main_window.glob, 'env'):
-            user_props_dir = os.path.normpath(os.path.join(main_window.glob.env.stdUserPath(), "props")).replace("\\", "/")
-        else:
-            user_props_dir = os.path.normpath(os.path.join(os.path.expanduser("~"), "makehuman2", "data", "props")).replace("\\", "/")
+        addon_props_dir = os.path.join(env.stdSysPath(), "props").replace("\\", "/")
+        user_props_dir = os.path.normpath(os.path.join(env.stdUserPath(), "props")).replace("\\", "/")
 
         local_grid_widget = QListWidget()
         local_grid_widget.setViewMode(QListWidget.IconMode)
@@ -2402,8 +2396,7 @@ def initialize_prop_studio(app_reference, glob_reference, **kwargs):
                         elif os.path.isfile(png_path): 
                             active_icon_path = png_path
                         else:
-                            if hasattr(main_window, 'glob') and hasattr(main_window.glob.env, 'path_sysicon'):
-                                active_icon_path = os.path.normpath(os.path.join(main_window.glob.env.path_sysicon, "reset.png")).replace("\\", "/")
+                            active_icon_path = os.path.normpath(os.path.join(env.path_sysicon, "reset.png")).replace("\\", "/")
 
                         if base_name not in scanned_model_assets:
                             scanned_model_assets[base_name] = {"path": full_obj_path, "icon": active_icon_path}
@@ -2500,7 +2493,7 @@ def initialize_prop_studio(app_reference, glob_reference, **kwargs):
             _standalone_studio_dock_instance.setWidget(studio_room_main)
 
         if hasattr(glob_reference, 'prop_manager_pipeline') and glob_reference.prop_manager_pipeline:
-            print("[Prop Studio Core] Safely hijacked native application multi-prop manager context.")
+            print("[Prop Studio Core] Reuse application multi-prop manager context.")
             manager_instance = glob_reference.prop_manager_pipeline
         else:
             print("[Prop Studio Core] Creating master instance wrapper and binding to global workspace.")

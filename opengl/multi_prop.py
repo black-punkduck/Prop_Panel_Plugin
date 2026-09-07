@@ -126,6 +126,7 @@ class Multi_Prop():
         return None
 
     def drawProps(self, proj_view_matrix, campos, light_obj):
+        #print("drawProps from prop_manager draw")
         """Coordinates rendering states via direct injection into the OpenGL draw loops."""
         custom_props = getattr(self.glob, 'custom_props_list', [])
         bc = getattr(self.glob, 'baseClass', None)
@@ -275,6 +276,9 @@ class Multi_Prop():
 
 class MHRuntimeParticleEmitter:
     """Manages active live viewport particle simulation calculations over time frames."""
+    # TODO
+    # tick_physics in PrimitiveParticleEngine and calculate_live_particle_physics_tick in gui/prop_module
+    # we need to decide for one engine even if we have more than one calculation
     def __init__(self, config_data):
         self.config = config_data
         dynamics = config_data.get("particle_dynamics", {})
