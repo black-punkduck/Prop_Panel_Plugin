@@ -196,7 +196,7 @@ class Multi_Prop():
 
                 prop_data.runtime_gl_matrix = [float(x) for x in model_matrix.copyData()]
                 
-            inject_particle_gl_draw_pass(custom_props)
+            inject_particle_gl_draw_pass(self.glob, custom_props)
 
         # 2. RENDER THE 3D SOLID PROP GEOMETRY MESHES DIRECTLY FROM ATTACHED PARAMETERS
         if custom_props:
@@ -287,7 +287,7 @@ class MHRuntimeParticleEmitter:
         self.particles = [] # Holds live dictionaries: {"pos": [x,y,z], "vel": [x,y,z], "life": float}
         
     def advance_simulation_tick(self, delta_time, origin_pos):
-        """Advances positions along velocity vectors and spawns new particle nodes."""
+        """Advances positions along velocity vectors and spawns new particle nodes."""  # never called!!!
         dynamics = self.config.get("particle_dynamics", {})
         vel = dynamics.get("initial_velocity_xyz", [0.0, 1.0, 0.0])
         drift = dynamics.get("velocity_drift_xyz", [0.1, 0.1, 0.1])

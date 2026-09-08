@@ -40,7 +40,7 @@ class PrimitiveParticleEngine:
 
             max_particles = getattr(prop, 'max_particles', 200)
             is_emitting = getattr(prop, 'is_emitting', True)
-            
+
             # Fetch the raw position tracker variable safely
             origin_pos = getattr(prop, 'position', [0.0, 0.0, 0.0])
 

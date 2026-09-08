@@ -10,37 +10,17 @@ import os
 import numpy as np
 from OpenGL import GL as gl
 
+from ..core.particle_engine import live_particle_system
+
 # Globally retain bound hardware identifiers to eliminate frame hiccups
 TEXTURE_CACHE_REPOS = {}
 
-def inject_particle_gl_draw_pass(custom_props_list):
+def inject_particle_gl_draw_pass(glob, custom_props_list):
     """
     Renders particle streams as either alpha-masked texture images 
     (flames, water drops) or plain vector points for basic light.
     """
     
-    # 1. THREAD SAFE PATH EXTENSION: Discover sibling directories on execution
-    _current_dir = os.path.dirname(os.path.abspath(__file__))
-    _plugin_root = os.path.abspath(os.path.join(_current_dir, ".."))
-    
-    if _plugin_root not in sys.path:
-        sys.path.insert(0, _plugin_root)
-
-    # 2. RUN A SECURED LOCAL FALLBACK IMPORT FOR THE PHYSICS ENGINE
-    try:
-        from core.particle_engine import live_particle_system
-    except ImportError:
-        import importlib.util
-        core_path = os.path.join(_plugin_root, "core", "particle_engine.py")
-        if os.path.isfile(core_path):
-            spec = importlib.util.spec_from_file_location("particle_engine", core_path)
-            module = importlib.util.module_from_spec(spec)
-            sys.modules["core.particle_engine"] = module
-            spec.loader.exec_module(module)
-            live_particle_system = module.live_particle_system
-        else:
-            return
-
     # Helper function moved inside to prevent scoping/threading lookup collapses
     def internal_load_texture(glob_reference, relative_image_path):
         if not relative_image_path or relative_image_path == "PLAIN":
@@ -48,7 +28,7 @@ def inject_particle_gl_draw_pass(custom_props_list):
         if relative_image_path in TEXTURE_CACHE_REPOS:
             return TEXTURE_CACHE_REPOS[relative_image_path]
 
-        full_disk_route = os.path.normpath(os.path.join(_plugin_root, relative_image_path)).replace("\\", "/")
+        full_disk_route = os.path.normpath(os.path.join(glob_reference.env.path_sysdata, "mh2_official_tools", relative_image_path)).replace("\\", "/")
         if not os.path.isfile(full_disk_route):
             return None
 

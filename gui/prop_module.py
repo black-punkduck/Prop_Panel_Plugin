@@ -35,6 +35,7 @@ if _plugin_root not in sys.path:
     sys.path.insert(0, _plugin_root)
 
 from ..opengl.prop_manager import MultiPropManager
+from ..core.particle_engine import live_particle_system
 import random
 import time
 
@@ -1101,6 +1102,7 @@ class PropManagerPanel(MHGroupBox):
 
     def execute_master_heartbeat_pulse(self):
         """Unified system heartbeat pumps FSM ticks and particle physics calculations."""
+        # TODO both functions are not yet working, correct location?
         # 1. Pump the state machine transition pipelines
         if hasattr(self, 'pump_state_machine_tick'):
             self.pump_state_machine_tick()
@@ -1261,7 +1263,6 @@ class PropManagerPanel(MHGroupBox):
             # UNIQUE ID BRIDGING ANCHOR
             prop_id = getattr(self.current_prop, 'name', 'ball')
             
-            from core.particle_engine import live_particle_system
             if prop_id not in live_particle_system.emitter_pools:
                 live_particle_system.emitter_pools[prop_id] = []
             
@@ -1288,7 +1289,6 @@ class PropManagerPanel(MHGroupBox):
             if hasattr(self.current_prop, 'particles'):
                 self.current_prop.particles.clear()
                 
-            from core.particle_engine import live_particle_system
             if prop_id in live_particle_system.emitter_pools:
                 live_particle_system.emitter_pools[prop_id].clear()
                 
