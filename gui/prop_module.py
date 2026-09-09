@@ -36,43 +36,9 @@ if _plugin_root not in sys.path:
 
 from ..opengl.prop_manager import MultiPropManager
 from ..core.particle_engine import live_particle_system
+from ..core.emitter_prop import MH2PropParticle, MH2LiveEmitterProp
 import random
 import time
-
-class MH2PropParticle:
-    """A single particle dot spawned by an emitter prop."""
-    def __init__(self, origin_pos, color=None):
-        self.x = float(origin_pos[0])
-        self.y = float(origin_pos[1])
-        self.z = float(origin_pos[2])
-        self.vx = random.uniform(-0.3, 0.3)
-        self.vy = random.uniform(1.2, 2.5) 
-        self.vz = random.uniform(-0.3, 0.3)
-        
-        # Safely extracts color properties from color, color_rgba, or particle_color
-        raw_color = color
-        if hasattr(color, 'color_rgba'):
-            raw_color = color.color_rgba
-        elif hasattr(color, 'particle_color'):
-            raw_color = color.particle_color
-            
-        if isinstance(raw_color, (list, tuple)) and len(raw_color) >= 3:
-            self.color = [float(c) for c in raw_color[:4]]
-            if len(self.color) == 3:
-                self.color.append(1.0) # Automatically inject fully opaque alpha target
-        else:
-            self.color = [1.0, 0.4, 0.0, 1.0] # Fire Magic Torch vibrant orange fallback
-            
-        #self.birth_time = time.time()
-        self.lifetime = 0.0
-        self.lifespan = random.uniform(0.6, 1.5)
-
-    def is_dead(self):
-        return self.lifetime > self.lifespan
-
-    def update(self, span):
-        self.lifetime += span
-        self.x += 1
 
 class MHRoomFloorGeometry:
     """Dynamically constructs an isolated 4-corner floor square mesh overlay."""
@@ -138,8 +104,8 @@ class PropObject():
         self.object_type = "STATIC"     # Matches list panel strings
         self.is_emitting = False        # Links directly to emission checkmark
         self.is_mesh_visible = True     # Links directly to ghost mode checkmark
-        self.max_particles = 300
-        self.particles = []             # Clean memory array loop holder
+
+        self.emitter = None             # should hold the emitter connection (wild hold also max-particles etc.)
 
         self.position = np.array([0.0, 0.0, 0.0], dtype=np.float64)
         self.rotation = np.array([0.0, 0.0, 0.0], dtype=np.float64) 
@@ -582,8 +548,6 @@ class PropManLeftPanel(QWidget):
         new_studio_asset.type = prop_type
         
         # Route config parameters straight out of the JSON map onto the live scene element
-        new_studio_asset.max_particles = int(asset_profile.get("particle_count", asset_profile.get("max_particles", 300)))
-        new_studio_asset.is_emitting = bool(asset_profile.get("is_emitting", True))
         new_studio_asset.is_mesh_visible = bool(asset_profile.get("is_mesh_visible", True))
         new_studio_asset.visible = new_studio_asset.is_mesh_visible
         
@@ -595,6 +559,11 @@ class PropManLeftPanel(QWidget):
         new_studio_asset.use_parenting = True if prop_type == "EMITTER" else False
         new_studio_asset.position = np.array([0.0, 0.814, 0.0], dtype=np.float64)
 
+        # is asset an emitter?
+        new_studio_asset.is_emitting = bool(asset_profile.get("is_emitting", True))
+        if new_studio_asset.is_emitting:
+            new_studio_emitter = MH2LiveEmitterProp(new_studio_asset.prop_id, asset_profile)
+
         pm = PropMesh(self.glob)
         res, err = pm.load(full_obj_path)
         if res:
@@ -605,8 +574,10 @@ class PropManLeftPanel(QWidget):
             if hasattr(self.glob, 'prop_manager_pipeline') and self.glob.prop_manager_pipeline:
                 self.glob.prop_manager_pipeline.registerProp(prop_name, new_studio_asset.obj, parent_bone=new_studio_asset.parent_bone, relative_transform=t_struct)
 
+        """
         if not hasattr(self.glob, 'custom_props_list'):
             self.glob.custom_props_list = []
+        """
             
         self.propman.current_prop = new_studio_asset
         self.glob.custom_props_list.append(new_studio_asset)
@@ -619,7 +590,8 @@ class PropManLeftPanel(QWidget):
             
         return True
 
-        
+        # after a return this code is NOT reached ...
+
         class MHStudioLivePropObject:
             def __init__(self):
 
@@ -945,7 +917,7 @@ class PropManLeftPanel(QWidget):
     def sync_density_to_active_prop(self, value):
         """Live pushes slider adjustments straight to the particle memory buffers."""
         if hasattr(self, 'current_prop') and self.current_prop:
-            self.current_prop.max_particles = int(value)
+            self.current_prop.emitter.max_particles = int(value)
             print(f"[FX Tuning] Stream density capped at: {int(value)} particles for {self.current_prop.name}")
 
     def sync_size_to_active_prop(self, value):
@@ -1128,30 +1100,26 @@ class PropManagerPanel(MHGroupBox):
                 if not self.leftPanel.active_emit_cb.isChecked():
                     continue
 
-            if not hasattr(prop, "particles_pool"):
-                #print ("object", prop.name, "create new pool")
-                prop.particles_pool = []
+            # moved logic to emitter
+            #
+            if prop.emitter:
+                emitter = prop.emitter
 
-            max_particles = getattr(prop, 'max_particles', getattr(prop, 'particle_count', 200))
-            p_pos = getattr(prop, 'position', getattr(prop, 'world_position', [0.0, 0.0, 0.0]))
+                # 1. Generate fresh particle records up to the assigned buffer threshold
+                if len(emitter.particles_pool) < int(emitter.max_particles):
+                    for _ in range(2):
+                        new_particle = MH2PropParticle(emitter.world_position, emitter.particle_color)
+                        emitter.particles_pool.append(new_particle)
 
-            # 1. Generate fresh particle records up to the assigned buffer threshold
-            if len(prop.particles_pool) < int(max_particles):
-                p_color = getattr(prop, 'particle_color', getattr(prop, 'color_rgba', [1.0, 0.4, 0.0, 1.0]))
-                for _ in range(2):
-                    new_particle = MH2PropParticle(p_pos, p_color)
-                    prop.particles_pool.append(new_particle)
-                #print ("object", prop.name, "generate pool", len(prop.particles_pool))
+                # 2. Progress coordinates smoothly using a flat physics delta time step
+                for p in emitter.particles_pool:
+                    p.update(0.033) # Progress physics forward using 30fps step
 
-            # 2. Progress coordinates smoothly using a flat physics delta time step
-            for p in prop.particles_pool:
-                p.update(0.033) # Progress physics forward using 30fps step
-
-            # 3. Flush expired particle nodes out of active drawing tracking lists
-            prop.particles_pool = [p for p in prop.particles_pool if not p.is_dead()]
+                # 3. Flush expired particle nodes out of active drawing tracking lists
+                emitter.particles_pool = [p for p in emitter.particles_pool if not p.is_dead()]
             
-            # 4. Bind values cleanly onto the shared object so opengl/multi_prop.py can read them
-            prop.particles = [[float(part.x), float(part.y), float(part.z)] for part in prop.particles_pool]
+                # 4. Bind values cleanly onto the shared object so opengl/multi_prop.py can read them
+                emitter.particles = [[float(part.x), float(part.y), float(part.z)] for part in emitter.particles_pool]
 
         # Trigger an immediate OpenGL canvas buffer refresh to repaint the canvas scene
         if self.glob and getattr(self.glob, 'openGLWindow', None):
@@ -1845,10 +1813,11 @@ class PropManagerPanel(MHGroupBox):
             new_prop.type = 'EMITTER'
 
             has_config = 'config_data' in locals() and config_data is not None
-            
-            new_prop.max_particles = int(config_data.get("particle_count", 300)) if has_config else 300
             new_prop.is_emitting = bool(config_data.get("is_emitting", True)) if has_config else True
-
+            if new_prop.is_emitting:
+                # TODO: emitter config_data could be zero
+                print ("should be an emitter", new_prop.prop_id)
+                new_prop.emitter = MH2LiveEmitterProp(new_prop.prop_id, config_data)
             
             if self.leftPanel:
                 is_mesh_visible = not self.leftPanel.ghost_mode_cb.isChecked()
@@ -1872,6 +1841,7 @@ class PropManagerPanel(MHGroupBox):
         new_prop.use_parenting = use_parent
         new_prop.parent_bone = target_bone
 
+        print("Inside add_prop_to_scene")
         print(dumper(new_prop))
         
         if not hasattr(self.glob, 'custom_props_list'):
@@ -2026,33 +1996,8 @@ class PropManagerPanel(MHGroupBox):
         self._trigger_viewport_redraw()
 
     def _trigger_viewport_redraw(self):
-        """Forces the active standalone OpenGL canvas window layout to repaint its buffers safely."""
-        cv = getattr(self.glob, "openGLWindow", None)
-        if not cv and hasattr(self.parent, 'graph') and self.parent.graph:
-            cv = getattr(self.parent.graph, 'view', None)
-        if not cv and hasattr(self.parent, 'glWindow'):
-            cv = self.parent.glWindow
-            
-        if cv:
-            from PySide6.QtCore import QTimer
-            
-            def safe_asynchronous_paint_flush():
-                try:
-                    if hasattr(cv, "update"): 
-                        cv.update()
-                    elif hasattr(cv, "repaint"): 
-                        cv.repaint()
-                    elif hasattr(cv, "updateGL"): 
-                        cv.updateGL()
-                        
-                    if hasattr(self, 'view') and self.view and hasattr(self.view, 'Tweak'):
-                        self.view.Tweak()
-                    elif getattr(self.glob, 'openGLWindow', None) and hasattr(self.glob.openGLWindow, 'Tweak'):
-                        self.glob.openGLWindow.Tweak()
-                except Exception as thread_err:
-                    print(f"[Prop Studio Debug] Thread-safe redraw loop skipped: {thread_err}")
-
-            QTimer.singleShot(0, safe_asynchronous_paint_flush)
+        """ Forces the active standalone OpenGL, no extra effort needed """
+        self.glob.openGLWindow.Tweak()
 
     def findBonePosition(self):
         """Snaps an object's position directly onto the skeleton's coordinates."""
