@@ -551,18 +551,23 @@ class PropManLeftPanel(QWidget):
         new_studio_asset.is_mesh_visible = bool(asset_profile.get("is_mesh_visible", True))
         new_studio_asset.visible = new_studio_asset.is_mesh_visible
         
-        # Link up texture maps paths for prop_renderer.py to parse
-        new_studio_asset.particle_texture = asset_profile.get("particle_texture", "PLAIN")
-        new_studio_asset.particle_color = asset_profile.get("color_rgba", [1.0, 0.4, 0.0, 1.0])
+        # FIXED: Map all 4 mode descriptor variables out of JSON onto the live engine asset properties
+        new_studio_asset.emitter_mode = str(asset_profile.get("emitter_mode", "PARTICLES")).upper().strip()
+        new_studio_asset.particle_texture = str(asset_profile.get("particle_texture", "PLAIN"))
+        new_studio_asset.particle_draw_size = float(asset_profile.get("particle_draw_size", 6.0))
+        
+        # Route fallback colors properly out of varying manifest naming iterations
+        new_studio_asset.particle_color = asset_profile.get("particle_color", asset_profile.get("color_rgba", [1.0, 0.4, 0.0, 1.0]))
         
         new_studio_asset.parent_bone = asset_profile.get("default_bone", asset_profile.get("parent_bone", "hand_R"))
         new_studio_asset.use_parenting = True if prop_type == "EMITTER" else False
         new_studio_asset.position = np.array([0.0, 0.814, 0.0], dtype=np.float64)
 
-        # is asset an emitter?
+        # Check if asset is an emitter to bind tracking entities
         new_studio_asset.is_emitting = bool(asset_profile.get("is_emitting", True))
         if new_studio_asset.is_emitting:
             new_studio_emitter = MH2LiveEmitterProp(new_studio_asset.prop_id, asset_profile)
+            new_studio_asset.emitter = new_studio_emitter
 
         pm = PropMesh(self.glob)
         res, err = pm.load(full_obj_path)
@@ -574,21 +579,18 @@ class PropManLeftPanel(QWidget):
             if hasattr(self.glob, 'prop_manager_pipeline') and self.glob.prop_manager_pipeline:
                 self.glob.prop_manager_pipeline.registerProp(prop_name, new_studio_asset.obj, parent_bone=new_studio_asset.parent_bone, relative_transform=t_struct)
 
-        """
-        if not hasattr(self.glob, 'custom_props_list'):
-            self.glob.custom_props_list = []
-        """
-            
         self.propman.current_prop = new_studio_asset
+        if not hasattr(self.glob, 'custom_props_list') or self.glob.custom_props_list is None:
+            self.glob.custom_props_list = []
+            
         self.glob.custom_props_list.append(new_studio_asset)
-        
         self.setValueFromProp(new_studio_asset)
         
-        # REDIRECT TO PROPMAN COMPONENT OBJECT
         if hasattr(self, 'propman') and self.propman:
             self.propman.global_pipeline_refresh()
             
         return True
+
 
         # after a return this code is NOT reached ...
 
@@ -1470,6 +1472,7 @@ class PropManagerPanel(MHGroupBox):
             self.glob.openGLWindow.update()
 
     def pump_state_machine_tick(self):
+        """Pumps framework updates safely without double-stacking joint transformations."""
         if self.glob is not None:
             bc = getattr(self.glob, 'baseClass', None)
             if bc and hasattr(bc, 'scene') and bc.scene and hasattr(bc.scene, 'floorsize'):
@@ -1499,34 +1502,16 @@ class PropManagerPanel(MHGroupBox):
             current_run_state = getattr(self.prop_fsm, 'current_state_name', 'IDLE')
             self.state_label.setText(f"Current State Pipeline: {current_run_state}")
 
+            # FIXED: Let MultiPropManager handle the matrix drawing rigidly instead of overwriting raw positional variables
             if current_run_state in ["EQUIPPING", "USING"] and getattr(self.current_prop, 'use_parenting', False):
                 self.prop_fsm.update_machine(active_name)
-                target_bone_name = getattr(self.current_prop, 'parent_bone', 'None')
-                bc = getattr(self.glob, 'baseClass', None)
+                # Keep local offset variables connected, but do not override self.current_prop.position here!
                 
-                if bc and (hasattr(bc, 'pose_skeleton') or hasattr(bc, 'skeleton')) and target_bone_name != "None":
-                    # Access the skeleton mapping properties based on the active pose mode states
-                    skeleton = bc.pose_skeleton if getattr(bc, 'in_posemode', False) else bc.skeleton
-                    if skeleton and hasattr(skeleton, 'bones') and target_bone_name in skeleton.bones:
-                        bone = skeleton.bones[target_bone_name]
-                        
-                        # Extract the structural coordinate translation positions out of the joint objects
-                        b_pos = getattr(bone, 'poseheadPos', getattr(bone, 'headPos', None))
-                        b_rot = getattr(bone, 'matPoseVerts', getattr(bone, 'matRestGlobal', None))
-                        
-                        if b_pos is not None:
-                            pos_vector = [float(b_pos.x()), float(b_pos.y()), float(b_pos.z())]
-                            
-                            # Safely apply position coordinates directly into the PropObject tracker!
-                            if hasattr(self.current_prop, 'set_transform'):
-                                self.current_prop.set_transform(pos=pos_vector)
-                            else:
-                                self.current_prop.position = np.array(pos_vector, dtype=np.float64)
-
             elif current_run_state == "DEQUIPPING":
                 if getattr(self.current_prop, 'use_parenting', False) and hasattr(self.current_prop, 'detach'):
                     self.current_prop.detach()
                 self.prop_fsm.update_machine(active_name)
+
 
     def sync_sidebar_list_display(self):
         """Refreshes the itemized catalog rows displayed in the left workspace panel."""
@@ -1578,7 +1563,7 @@ class PropManagerPanel(MHGroupBox):
         self.leftPanel.prop_list.blockSignals(False)
 
     def refreshProps(self, dtype):
-        """Scans BOTH core plugin directories and user custom paths seamlessly to merge all data files."""
+        """Scans plugin directories cleanly to populate the asset browser list without breaking additions."""
         data = []
         custom_pool = getattr(self.glob, 'custom_props_list', [])
         search_directories = []
@@ -1593,12 +1578,10 @@ class PropManagerPanel(MHGroupBox):
         local_plugin_data = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", "props"))
         search_directories.append(local_plugin_data)
         
-        sys_icon_dir = None
-        if self.env and hasattr(self.env, 'path_sysicon'):
-            sys_icon_dir = self.env.path_sysicon
-
+        sys_icon_dir = getattr(self.env, 'path_sysicon', None)
         processed_obj_paths = set()
 
+        # Build list records cleanly directly from asset files on disk
         for target_dir in search_directories:
             if not target_dir or not os.path.isdir(target_dir):
                 continue
@@ -1616,9 +1599,7 @@ class PropManagerPanel(MHGroupBox):
                     target_thumb = full_obj_path.replace(".obj", ".thumb")
                     
                     if not os.path.isfile(target_thumb) and sys_icon_dir:
-                        placeholder_img = os.path.normpath(os.path.join(sys_icon_dir, "none.png")).replace("\\", "/")
-                        if not os.path.isfile(placeholder_img):
-                            placeholder_img = os.path.normpath(os.path.join(sys_icon_dir, "reset.png")).replace("\\", "/")
+                        placeholder_img = os.path.normpath(os.path.join(sys_icon_dir, "reset.png")).replace("\\", "/")
                         if os.path.isfile(placeholder_img):
                             try:
                                 px = QPixmap(placeholder_img)
@@ -1631,7 +1612,6 @@ class PropManagerPanel(MHGroupBox):
 
                     if not any(getattr(a, 'path', '') == full_obj_path for a in getattr(self.glob, 'cachedInfo', [])):
                         from types import SimpleNamespace
-                        
                         native_asset = SimpleNamespace()
                         native_asset.name = base_name
                         native_asset.uuid = uuid
@@ -1652,32 +1632,16 @@ class PropManagerPanel(MHGroupBox):
                             if getattr(a, 'path', '') == full_obj_path: 
                                 a.used = is_active
 
-
-        if self.leftPanel and hasattr(self.leftPanel, 'inventory_table'):
-            from PySide6.QtWidgets import QTableWidgetItem
-            self.leftPanel.inventory_table.setRowCount(0)
-            
-            row_idx = 0
-            for asset in getattr(self.glob, 'cachedInfo', []):
-                if getattr(asset, 'folder', '') == "props":
-                    is_active = any(getattr(p, 'path', '') == asset.path for p in custom_pool)
-                    self.leftPanel.inventory_table.insertRow(row_idx)
-                    
-                    # Column 1: Asset Name
-                    name_item = QTableWidgetItem(str(getattr(asset, 'name', 'Unknown')))
-                    name_item.setData(Qt.UserRole, getattr(asset, 'name', ''))
-                    self.leftPanel.inventory_table.setItem(row_idx, 0, name_item)
-                    
-                    # Column 2: Active State Status String
+                    # FIXED: Append to our local display data array block securely
                     status_str = "Active in Scene" if is_active else "Available File"
-                    self.leftPanel.inventory_table.setItem(row_idx, 1, QTableWidgetItem(status_str))
-                    
-                    # Column 3: Action Trigger guideline text
                     action_str = "Double-click to remove" if is_active else "Double-click to equip"
-                    self.leftPanel.inventory_table.setItem(row_idx, 2, QTableWidgetItem(action_str))
-                    
-                    data.append([getattr(asset, 'name', 'Unknown Prop'), status_str, action_str])
-                    row_idx += 1
+                    data.append([base_name, status_str, action_str])
+
+        # FIXED: Prevent the inventory layout loops from breaking your asset selection columns!
+        if self.leftPanel and hasattr(self.leftPanel, 'inventory_table'):
+            self.leftPanel.inventory_table.blockSignals(True)
+            self.leftPanel.refresh_inventory_list() # Uses dedicated refresh function safely instead of wiping columns
+            self.leftPanel.inventory_table.blockSignals(False)
                 
         if "props" in getattr(self.parent, 'equipment', {}):
             props_tab_ui = self.parent.equipment["props"].get("func")
@@ -1710,7 +1674,7 @@ class PropManagerPanel(MHGroupBox):
         return None
 
     def add_prop_to_scene(self, asset):
-        """Instantiates a loose asset file and allocates standard hardware memory buffers."""
+        """Instantiates assets by checking matching manifest configuration entries explicitly first."""
         target_path = os.path.normpath(getattr(asset, 'path', getattr(asset, 'filename', str(asset))))
         
         pm = PropMesh(self.glob)
@@ -1719,11 +1683,38 @@ class PropManagerPanel(MHGroupBox):
             return False, err
 
         obj = pm.getObj()
+        file_base_name = pm.getOriginalName().lower().strip()
         
-        name = pm.getOriginalName().lower().strip()
-        prop_name = getattr(asset, 'name', name).lower().strip()
+        # Load your configuration settings dictionary records
+        manifest = load_props_manifest()
+        config_data = None
+        
+        # Pull selected identifier out of user item metadata if available
+        passed_id = getattr(asset, 'name', '').strip()
+        
+        # 1. PRIMARY LOOKUP: Match explicitly against defined profile keys (e.g. Floating_Spirit_Wisp)
+        if passed_id in manifest:
+            config_data = manifest[passed_id]
+            matched_key = passed_id
+        else:
+            # Secondary check: loop keys case-insensitively
+            for key, profile in manifest.items():
+                if str(key).lower().strip() == passed_id.lower():
+                    config_data = profile
+                    matched_key = key
+                    break
+                    
+        # 2. TERTIARY FALLBACK: Scan mesh definitions paths if the structural key tracker misses
+        if config_data is None:
+            for key, profile in manifest.items():
+                mesh_lookup = str(profile.get("mesh_path", "")).lower()
+                if os.path.basename(mesh_lookup) == os.path.basename(target_path).lower():
+                    config_data = profile
+                    matched_key = key
+                    break
 
-        # Fallback tracking parameters
+        # Load parameter profiles or fall back safely to code standards
+        name = config_data.get("name", passed_id if passed_id else file_base_name) if config_data else file_base_name
         initial_pos = [0.0, 0.0, 0.0]
         initial_rot = [0.0, 0.0, 0.0]
         initial_scale = [1.0, 1.0, 1.0]
@@ -1731,37 +1722,19 @@ class PropManagerPanel(MHGroupBox):
         use_parent = False
         target_bone = "None"
         
-        json_path = target_path.replace(".obj", ".json")
-        if os.path.isfile(json_path):
-            config_data = None
-            if self.env and hasattr(self.env, 'readJSON'):
-                try: config_data = self.env.readJSON(json_path)
-                except Exception: config_data = None
-                    
-            if config_data is None:
-                try:
-                    import json
-                    with open(json_path, 'r', encoding='utf-8') as j_f:
-                        config_data = json.load(j_f)
-                except Exception as json_err:
-                    print(f"[Prop Studio Warning] Bypassed local layout config error: {json_err}")
-                    config_data = None
-
-            if config_data is not None:
-                name = config_data.get("name", name).lower().strip()
-
-                initial_pos = config_data.get("position", config_data.get("offset", initial_pos))
-                initial_rot = config_data.get("rotation", initial_rot)
-                initial_scale = config_data.get("scale", initial_scale)
-                initial_vis = config_data.get("is_mesh_visible", config_data.get("visible", initial_vis))
-                
-                parenting_block = config_data.get("parenting", {})
-                if isinstance(parenting_block, dict):
-                    use_parent = parenting_block.get("enabled", config_data.get("use_parenting", use_parent))
-                    target_bone = parenting_block.get("target_bone", config_data.get("default_bone", target_bone))
-                else:
-                    use_parent = config_data.get("use_parenting", use_parent)
-                    target_bone = config_data.get("default_bone", target_bone)
+        if config_data is not None:
+            initial_pos = config_data.get("position", config_data.get("offset", initial_pos))
+            initial_rot = config_data.get("rotation", initial_rot)
+            initial_scale = config_data.get("scale", initial_scale)
+            initial_vis = config_data.get("is_mesh_visible", config_data.get("visible", initial_vis))
+            
+            parenting_block = config_data.get("parenting", {})
+            if isinstance(parenting_block, dict):
+                use_parent = parenting_block.get("enabled", config_data.get("use_parenting", use_parent))
+                target_bone = parenting_block.get("target_bone", config_data.get("default_bone", target_bone))
+            else:
+                use_parent = config_data.get("use_parenting", use_parent)
+                target_bone = config_data.get("default_bone", target_bone)
 
         safe_pos = [float(p) for p in initial_pos] if hasattr(initial_pos, '__len__') else [0.0, 0.0, 0.0]
         safe_rot = [float(r) for r in initial_rot] if hasattr(initial_rot, '__len__') else [0.0, 0.0, 0.0]
@@ -1774,11 +1747,7 @@ class PropManagerPanel(MHGroupBox):
             s_f = float(initial_scale) if initial_scale is not None else 1.0
             safe_scale = [s_f, s_f, s_f]
             
-        t_struct = {
-            "translation": safe_pos, 
-            "rotation": safe_rot, 
-            "scale": safe_scale
-        }
+        t_struct = {"translation": safe_pos, "rotation": safe_rot, "scale": safe_scale}
 
         existing_names = [getattr(p, 'name', '').lower() for p in getattr(self.glob, 'custom_props_list', [])]
         if name in existing_names:
@@ -1788,63 +1757,39 @@ class PropManagerPanel(MHGroupBox):
         pipeline = getattr(self.glob, 'prop_manager_pipeline', None)
         if pipeline and hasattr(pipeline, 'registerProp'):
             pipeline.registerProp(name, obj, parent_bone=target_bone, relative_transform=t_struct)
-            
-            if name not in pipeline.active_props:
-                pipeline.active_props[name] = {
-                    "obj": obj, 
-                    "parent_bone": target_bone, 
-                    "transform": t_struct, 
-                    "visible": initial_vis
-                }
-            print(f"[Prop Studio Core] Registered '{name}' directly inside core drawing pipeline arrays.")
 
         new_prop = PropObject(name, self.glob)
         new_prop.mesh_reference = pm 
         new_prop.obj = obj
         new_prop.path = target_path.replace("\\", "/")
+        new_prop.prop_id = str(matched_key) if config_data else f"props_{file_base_name}"
         
-        # Store dynamic layout configuration parameters safely
-        new_prop.prop_id = getattr(asset, 'uuid', f"props_{name}")
-        
-        emitter_keywords = ["ball", "diamond", "cocoon", "torch", "wisp", "cone"]
-
-        if any(keyword in name.lower() for keyword in emitter_keywords):
-            new_prop.object_type = 'EMITTER'
-            new_prop.type = 'EMITTER'
-
-            has_config = 'config_data' in locals() and config_data is not None
-            new_prop.is_emitting = bool(config_data.get("is_emitting", True)) if has_config else True
-            if new_prop.is_emitting:
-                # TODO: emitter config_data could be zero
-                print ("should be an emitter", new_prop.prop_id)
-                new_prop.emitter = MH2LiveEmitterProp(new_prop.prop_id, config_data)
-            
-            if self.leftPanel:
-                is_mesh_visible = not self.leftPanel.ghost_mode_cb.isChecked()
-                new_prop.is_mesh_visible = is_mesh_visible
-                new_prop.set_visibility(is_mesh_visible)
-            else:
-                new_prop.is_mesh_visible = initial_vis
-
-            print(f"[Prop Studio Core] Dynamic keyword intercept pass successful!")
-            print(f"[Prop Studio Core] '{name}' has been successfully upgraded to an EMITTER.")
+        # Route multi-mode configurations out of manifest files straight to memory properties
+        if config_data:
+            new_prop.object_type = str(config_data.get("type", "STATIC")).upper().strip()
+            new_prop.type = new_prop.object_type
+            new_prop.emitter_mode = str(config_data.get("emitter_mode", "PARTICLES")).upper().strip()
+            new_prop.particle_texture = str(config_data.get("particle_texture", config_data.get("thumb", "PLAIN")))
+            new_prop.particle_draw_size = float(config_data.get("particle_draw_size", 6.0))
+            new_prop.particle_color = config_data.get("particle_color", config_data.get("color_rgba", [1.0, 0.4, 0.0, 1.0]))
+            new_prop.is_emitting = bool(config_data.get("is_emitting", True))
         else:
             new_prop.object_type = 'STATIC'
             new_prop.type = 'STATIC'
-            new_prop.is_mesh_visible = initial_vis
+            new_prop.is_emitting = False
+
+        if new_prop.object_type == "EMITTER" and new_prop.is_emitting:
+            new_prop.emitter = MH2LiveEmitterProp(new_prop.prop_id, config_data)
 
         new_prop.position = np.array(safe_pos, dtype=np.float64)
         new_prop.rotation = np.array(safe_rot, dtype=np.float64)
         new_prop.scale = np.array(safe_scale, dtype=np.float64)
-        
-        new_prop.visible = initial_vis if new_prop.is_mesh_visible else False
+        new_prop.visible = initial_vis
+        new_prop.is_mesh_visible = initial_vis
         new_prop.use_parenting = use_parent
         new_prop.parent_bone = target_bone
 
-        print("Inside add_prop_to_scene")
-        print(dumper(new_prop))
-        
-        if not hasattr(self.glob, 'custom_props_list'):
+        if not hasattr(self.glob, 'custom_props_list') or self.glob.custom_props_list is None:
             self.glob.custom_props_list = []
         self.current_prop = new_prop
         self.glob.custom_props_list.append(new_prop)
@@ -1854,6 +1799,7 @@ class PropManagerPanel(MHGroupBox):
             
         self.global_pipeline_refresh()
         return True, ""
+
 
     def update_selection_focus_by_name(self, target_name):
         """Allows raycasting loops or text items to swap active selection focus cleanly."""
@@ -2399,12 +2345,23 @@ def initialize_prop_studio(app_reference, glob_reference, **kwargs):
             if asset_name in scanned_model_assets:
                 file_target = scanned_model_assets[asset_name]["path"]
                 thumb_target = scanned_model_assets[asset_name]["icon"]
+                
+                # Create a uniform structure matching what add_prop_to_scene expects
                 from types import SimpleNamespace
                 mock_asset = SimpleNamespace(
-                    name=asset_name, path=file_target, filename=file_target, folder="props",
-                    subfolder=None, thumbfile=thumb_target, author="User", tag=["user", asset_name]
+                    name=asset_name, 
+                    path=file_target, 
+                    filename=file_target, 
+                    folder="props",
+                    uuid=asset_name,  # Force it to pass the true dictionary lookups key
+                    subfolder=None, 
+                    thumbfile=thumb_target, 
+                    author="User", 
+                    tag=["user", asset_name]
                 )
                 print(f"[Prop Studio Core] Deploying scene initialization for: {file_target}")
+                
+                # ROUTE IT THROUGH THE REAL MESH BUFFER ALLOCATOR
                 prop_manager_widget.add_prop_to_scene(mock_asset)
 
         try:
