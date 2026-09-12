@@ -566,7 +566,7 @@ class PropManLeftPanel(QWidget):
         # Check if asset is an emitter to bind tracking entities
         new_studio_asset.is_emitting = bool(asset_profile.get("is_emitting", True))
         if new_studio_asset.is_emitting:
-            new_studio_emitter = MH2LiveEmitterProp(new_studio_asset.prop_id, asset_profile)
+            new_studio_emitter = MH2LiveEmitterProp(self.glob, new_studio_asset.prop_id, asset_profile)
             new_studio_asset.emitter = new_studio_emitter
 
         pm = PropMesh(self.glob)
@@ -1105,23 +1105,7 @@ class PropManagerPanel(MHGroupBox):
             # moved logic to emitter
             #
             if prop.emitter:
-                emitter = prop.emitter
-
-                # 1. Generate fresh particle records up to the assigned buffer threshold
-                if len(emitter.particles_pool) < int(emitter.max_particles):
-                    for _ in range(2):
-                        new_particle = MH2PropParticle(emitter.world_position, emitter.particle_color)
-                        emitter.particles_pool.append(new_particle)
-
-                # 2. Progress coordinates smoothly using a flat physics delta time step
-                for p in emitter.particles_pool:
-                    p.update(0.033) # Progress physics forward using 30fps step
-
-                # 3. Flush expired particle nodes out of active drawing tracking lists
-                emitter.particles_pool = [p for p in emitter.particles_pool if not p.is_dead()]
-            
-                # 4. Bind values cleanly onto the shared object so opengl/multi_prop.py can read them
-                emitter.particles = [[float(part.x), float(part.y), float(part.z)] for part in emitter.particles_pool]
+                prop.emitter.loop(2, 0.033) # 2 new particles +  30fps step
 
         # Trigger an immediate OpenGL canvas buffer refresh to repaint the canvas scene
         if self.glob and getattr(self.glob, 'openGLWindow', None):
@@ -1736,6 +1720,23 @@ class PropManagerPanel(MHGroupBox):
                 use_parent = config_data.get("use_parenting", use_parent)
                 target_bone = config_data.get("default_bone", target_bone)
 
+            bone_name = "wrist.R"       # Hand_R would be solved via base.json, so this is a Test
+            bc = self.glob.baseClass
+            skeleton = bc.pose_skeleton if bc.in_posemode else bc.default_skeleton
+            if skeleton:
+                if bone_name in skeleton.bones:
+                    bone = skeleton.bones[bone_name]
+
+                    if bc.in_posemode:
+                        b_rot = getattr(bone, 'matPoseVerts', None)
+                        b_pos = getattr(bone, 'poseheadPos', None)
+                    else:
+                        b_rot = getattr(bone, 'matRestGlobal', None)
+                        b_pos = getattr(bone, 'headPos', None)
+
+                    initial_pos = b_pos
+
+
         safe_pos = [float(p) for p in initial_pos] if hasattr(initial_pos, '__len__') else [0.0, 0.0, 0.0]
         safe_rot = [float(r) for r in initial_rot] if hasattr(initial_rot, '__len__') else [0.0, 0.0, 0.0]
         
@@ -1779,7 +1780,11 @@ class PropManagerPanel(MHGroupBox):
             new_prop.is_emitting = False
 
         if new_prop.object_type == "EMITTER" and new_prop.is_emitting:
-            new_prop.emitter = MH2LiveEmitterProp(new_prop.prop_id, config_data)
+            new_prop.emitter = MH2LiveEmitterProp(self.glob, new_prop.prop_id, config_data)
+            success, err = new_prop.emitter.loadParticleMesh()      # always works, return true, when not physical mesh
+            if not success:
+                ErrorBox(self.glob.centralWidget, err)
+            new_prop.emitter.loadParticleTexture()
 
         new_prop.position = np.array(safe_pos, dtype=np.float64)
         new_prop.rotation = np.array(safe_rot, dtype=np.float64)

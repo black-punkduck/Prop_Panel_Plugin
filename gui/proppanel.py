@@ -1162,9 +1162,10 @@ class PropManagerPanel(MHGroupBox):
                 self._trigger_viewport_redraw()
 
 class CoreMH2PropPanel(QtWidgets.QWidget):
-    def __init__(self, parent_layout):
+    def __init__(self, glob, parent_layout):
         super().__init__()
         self.active_prop_object = None
+        self.glob = glob
         self.manifest_data = load_props_manifest()
         
         self.inject_ui_into_panel(parent_layout)
@@ -1198,7 +1199,7 @@ class CoreMH2PropPanel(QtWidgets.QWidget):
         
         if prop_config and prop_config["type"] == "EMITTER":
             # Initialize live emitter object tracking logic
-            self.active_prop_object = MH2LiveEmitterProp(prop_id, prop_config)
+            self.active_prop_object = MH2LiveEmitterProp(self.glob, prop_id, prop_config)
             
             # Map existing file configurations out of JSON straight to UI handles
             self.hide_mesh_cb.setChecked(not prop_config["is_mesh_visible"])

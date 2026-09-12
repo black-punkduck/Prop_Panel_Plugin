@@ -16,7 +16,7 @@
     "ghost_wisp_01": {
         "name": "Floating Spirit Emitter",
         "type": "EMITTER",
-        "emitter_mode": "PARTICLES",
+        "emitter_mode": "PHYSICAL_MESH",
         "particle_draw_size": 6.0,
         "mesh_path": "data/props/ball.obj",
         "thumb": "data/icons/wisp.png",

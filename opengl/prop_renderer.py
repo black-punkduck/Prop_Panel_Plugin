@@ -52,12 +52,20 @@ def inject_particle_gl_draw_pass(glob, custom_props_list):
         glob._last_physics_frame_stamp = now
 
     for prop in custom_props_list:
+        continue
+
+        ### this code is no longer needed  !!!!!!!!!!!!!!!!!!!!!!!
+
         obj_type = getattr(prop, 'object_type', getattr(prop, 'type', 'STATIC'))
         if str(obj_type).upper() != 'EMITTER':
             continue
 
         # RESTORED ACTION GATE: Instantly skip drawing if user toggles emission off (Fixes Play/Pause)
         if not getattr(prop, 'is_emitting', True):
+            continue
+
+        mode = getattr(prop, 'emitter_mode', 'PARTICLES').upper().strip()
+        if prop.emitter and mode == "PHYSICAL_MESH":
             continue
 
         prop_id = getattr(prop, 'name', None)
@@ -98,32 +106,8 @@ def inject_particle_gl_draw_pass(glob, custom_props_list):
             r, g, b, a = 1.0, 0.4, 0.0, 1.0 # Safe programmatic orange baseline variable
 
         # Fetch mode flags from your schema maps
-        mode = getattr(prop, 'emitter_mode', 'PARTICLES').upper().strip()
         size = float(getattr(prop, 'particle_draw_size', 6.0))
 
-        # =====================================================================
-        # MODE 4: PHYSICAL OBJECT MESH INSTANCING COPIES (.obj spawns)
-        # =====================================================================
-        if mode == "PHYSICAL_MESH" and hasattr(prop, 'mesh_reference') and prop.mesh_reference:
-            render_pipeline = getattr(glob, 'prop_manager_pipeline', None)
-            if render_pipeline:
-                active_shader = getattr(render_pipeline, 'pbr', getattr(render_pipeline, 'phong', None))
-                if active_shader and render_pipeline.shaders:
-                    render_pipeline.shaders.bindShader(active_shader)
-                    loc_mvp = gl.glGetUniformLocation(active_shader.program, "meshMVP")
-                    viewport = getattr(glob, 'openGLWindow', None)
-                    
-                    if viewport and loc_mvp != -1:
-                        proj_view = viewport.getProjViewMatrix()
-                        for i in range(0, len(vertices), 3):
-                            inst_m = QMatrix4x4()
-                            inst_m.translate(vertices[i], vertices[i+1], vertices[i+2])
-                            inst_m.scale(0.1, 0.1, 0.1) # Scale multiplier for small physical copies
-                            
-                            computed_mvp = proj_view * inst_m
-                            gl.glUniformMatrix4fv(loc_mvp, 1, gl.GL_FALSE, computed_mvp.data())
-                            prop.mesh_reference.render.draw(computed_mvp, viewport.campos, viewport.light, False)
-            continue
 
         # =====================================================================
         # OPENGL BLIT VECTOR DRAW PASS (MODES 1, 2, & 3)

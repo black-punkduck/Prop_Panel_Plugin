@@ -2,7 +2,7 @@
 ## Prop Manager V2.1 (Plugin Isolated Build)
 ## Part of the MakeHuman 2 Project contributed by Elvaerwyn_MH2 2026
 ######
-from PySide6.QtGui import QMatrix4x4, QVector3D, QVector4D
+from PySide6.QtGui import QMatrix4x4, QVector3D, QVector4D, QQuaternion
 import OpenGL
 from OpenGL import GL as gl
 import numpy as np
@@ -112,8 +112,6 @@ class MultiPropManager():
                     if skeleton:
                         if hasattr(skeleton, 'bones') and bone_name in skeleton.bones: 
                             bone = skeleton.bones[bone_name]
-                        elif hasattr(skeleton, 'getBone'): 
-                            bone = skeleton.getBone(bone_name)
 
                 if bone:
                     is_parented = True
@@ -150,7 +148,6 @@ class MultiPropManager():
                 else:
                     user_transform.translate(float(pos[0]), float(pos[1]), float(pos[2]))
 
-                from PySide6.QtGui import QQuaternion, QVector3D
                 q_pitch = QQuaternion.fromAxisAndAngle(QVector3D(1.0, 0.0, 0.0), float(rot[0]))
                 q_yaw   = QQuaternion.fromAxisAndAngle(QVector3D(0.0, 1.0, 0.0), float(rot[1]))
                 q_roll  = QQuaternion.fromAxisAndAngle(QVector3D(0.0, 0.0, 1.0), float(rot[2]))
@@ -168,6 +165,19 @@ class MultiPropManager():
 
                 robj = prop_data.mesh_reference.render
                 robj.draw(final_mvp, campos, light_obj, False)
+
+                # the particles are drawn here
+                #
+                if prop_data.emitter:
+                    emode = prop_data.emitter.emitter_mode
+                    if emode == "PHYSICAL_MESH":
+                        prop_data.emitter.drawMesh(proj_view_matrix, campos)
+                    elif emode == "PARTICLES":
+                        prop_data.emitter.drawDustParticles()
+                    elif emode == "SPRITES":
+                        prop_data.emitter.drawSprites()
+                    elif emode == "TEXTURED_SPRITES":
+                        prop_data.emitter.drawTexSprites()
 
                 gl.glActiveTexture(gl.GL_TEXTURE0)
                 gl.glBindTexture(gl.GL_TEXTURE_2D, 0)

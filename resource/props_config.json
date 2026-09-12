@@ -41,13 +41,15 @@
         "mesh_path": "data/props/ball.obj",
         "is_mesh_visible": true,
         "is_emitting": true,
+	"emitter_mode": "PHYSICAL_MESH",
+        "emitter_object": "data/props/cube.obj",
         "visible": true,
         "use_parenting": true,
         "default_bone": "hand_R",
         "parent_bone": "hand_R",
         "particle_count": 250,
         "max_particles": 250,
-        "particle_texture": "PLAIN",
+        "particle_texture": "data/props/particles/image_qB7hER.png",
         "color_rgba": [0.2, 0.6, 1.0, 1.0]
     },
     "torch_01": {
@@ -82,6 +84,24 @@
         "max_particles": 450,
         "particle_texture": "data/props/particles/flame.png",
         "color_rgba": [1.0, 1.0, 1.0, 1.0]
+    },
+    "cube": {
+        "id": "cube",
+        "name": "Cube Emitter",
+        "type": "EMITTER",
+        "object_type": "EMITTER",
+        "mesh_path": "data/props/cube.obj",
+        "is_mesh_visible": true,
+        "is_emitting": true,
+	"emitter_mode": "PARTICLES",
+        "visible": true,
+        "use_parenting": true,
+        "default_bone": "hand_R",
+        "parent_bone": "hand_R",
+        "particle_count": 250,
+        "max_particles": 250,
+        "particle_texture": "PLAIN",
+        "color_rgba": [0.2, 0.6, 1.0, 1.0]
     }
 }
 
