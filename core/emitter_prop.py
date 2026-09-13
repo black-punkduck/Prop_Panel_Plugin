@@ -127,27 +127,25 @@ class MH2LiveEmitterProp:
 
     def poolCopy(self):
         self.particles = [[float(part.x), float(part.y), float(part.z)] for part in self.particles_pool]
+        self.particles = np.ascontiguousarray(self.particles, dtype=np.float32)
+
 
     def getBonePosition(self):
         """
         TODO: it would be better to not put the evaluation here, but the parent object still stay in place
               while animation
         """
-        bone_name = "wrist.R"       # Hand_R would be solved via base.json, so this is a Test
         bc = self.glob.baseClass
-        skeleton = bc.pose_skeleton if bc.in_posemode else bc.default_skeleton
-        if skeleton:
-            if bone_name in skeleton.bones:
-                bone = skeleton.bones[bone_name]
+        coord, bone  = bc.getVirtualBonePosition(self.default_bone)
+        if bone is not None:
+            return coord
 
-                if bc.in_posemode:
-                    b_rot = getattr(bone, 'matPoseVerts', None)
-                    b_pos = getattr(bone, 'poseheadPos', None)
-                else:
-                    b_rot = getattr(bone, 'matRestGlobal', None)
-                    b_pos = getattr(bone, 'headPos', None)
-                return b_pos
-
+        """
+        if bc.in_posemode:
+           b_rot = getattr(bone, 'matPoseVerts', None)
+        else:
+           b_rot = getattr(bone, 'matRestGlobal', None)
+        """
         return self.world_position # fallback
 
     def loop(self, new, progress):

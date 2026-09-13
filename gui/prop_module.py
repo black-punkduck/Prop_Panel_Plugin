@@ -1959,40 +1959,26 @@ class PropManagerPanel(MHGroupBox):
         bc = getattr(self.glob, 'baseClass', None)
         if bc is None: 
             return
-            
-        pinfo = getattr(bc, 'baseInfo', {})
-        if not "props" in pinfo or pbone not in pinfo["props"]: 
-            return
-            
-        pbone = pinfo["props"][pbone]
-        skeleton = bc.pose_skeleton if getattr(bc, 'in_posemode', False) else bc.skeleton
-        if skeleton is None: 
-            skeleton = getattr(bc, 'default_skeleton', None)
-        if skeleton is None: 
-            return
-            
-        if hasattr(skeleton, 'bones') and pbone in skeleton.bones:
-            bone = skeleton.bones[pbone]
-            b_coord = bone.posetailPos if getattr(bc, 'in_posemode', False) else bone.tailPos
-            
-            if b_coord is not None and self.current_prop: 
+        
+        b_coord, bone = bc.getVirtualBonePosition(pbone)
+        if bone and self.current_prop: 
 
-                # Pull custom offset adjustments securely from local metadata slots
-                offset = getattr(self.current_prop, 'local_offset_pos', np.array([0.0,0.0,0.0]))
+            # Pull custom offset adjustments securely from local metadata slots
+            offset = getattr(self.current_prop, 'local_offset_pos', np.array([0.0,0.0,0.0]))
                 
-                # Apply absolute snap coordinates without stacking values into an infinite drift loop
-                aligned_pos = [
-                    float(offset[0]) + float(b_coord.x()),
-                    float(offset[1]) + float(b_coord.y()),
-                    float(offset[2]) + float(b_coord.z())
-                ]
+            # Apply absolute snap coordinates without stacking values into an infinite drift loop
+            aligned_pos = [
+                float(offset[0] + b_coord[0]),
+                float(offset[1] + b_coord[1]),
+                float(offset[2] + b_coord[2])
+            ]
                 
-                self.current_prop.position = np.array(aligned_pos, dtype=np.float64)
+            self.current_prop.position = np.array(aligned_pos, dtype=np.float64)
                 
-                if self.leftPanel:
-                    self.leftPanel.setValueFromProp(self.current_prop)
+            if self.leftPanel:
+                self.leftPanel.setValueFromProp(self.current_prop)
                     
-                self._trigger_viewport_redraw()
+            self._trigger_viewport_redraw()
 
 _standalone_studio_dock_instance = None
 
